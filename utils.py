@@ -30,10 +30,12 @@ class SegmentationDataset(Dataset):
         mask = self.masks[idx]
 
         if self.transform:
-            image = self.transform(image)
+            augmented = self.transform(image=image, mask=mask)
+            image = augmented['image']
+            mask = augmented['mask'].long()
         else:
             image = to_tensor(image)
-        mask = torch.from_numpy(mask).long()
+            mask = torch.from_numpy(mask).long()
         return image, mask
 
 

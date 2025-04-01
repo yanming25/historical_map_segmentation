@@ -11,7 +11,7 @@ from torchvision.transforms.functional import to_tensor
 from train_unet_semantic_segmentation_module import UNet, SegmentationDataset, tile_image
 from PIL import Image
 import rasterio
-from utils import evaluate_model
+from utils import evaluate_model, load_rgb_tif
 
 # ========== Step 1: Load Trained Model ==========
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -21,22 +21,17 @@ model = UNet(n_classes=8)
 # model.load_state_dict(torch.load("Baseline/unet_model_new.pth", map_location=device))
 
 # UNet model with data augmentation
-model.load_state_dict(torch.load("data_augmentation/unet_model_data_augmented.pth", map_location=device))
+model.load_state_dict(torch.load("data_augmentation/unet_model_data_augmented_new.pth", map_location=device))
 
 model.to(device)
 model.eval()
 
 # ========== Step 2: Load and Tile the Same Images ==========
-def load_rgb_tif(filepath):
-    with rasterio.open(filepath) as src:
-        img = src.read([1, 2, 3])
-        img = np.transpose(img, (1, 2, 0))
-    return img.astype(np.uint8)
 
-image_paths = [r"C:\cartography\project\Baseline\data\rgb_TA_124_1918.tif",
-               r"C:\cartography\project\Baseline\data\rgb_TA_138_1876.tif"]
-mask_paths = [r"C:\cartography\project\Baseline\data\testing_target_s1918.png",
-              r"C:\cartography\project\Baseline\data\testing_target_s1876.png"]
+image_paths = [r"C:\cartography\project\data\rgb_TA_124_1918.tif",
+               r"C:\cartography\project\data\rgb_TA_138_1876.tif"]
+mask_paths = [r"C:\cartography\project\data\testing_target_s1918.png",
+              r"C:\cartography\project\data\testing_target_s1876.png"]
 tile_size = 500
 
 image_tiles, mask_tiles = [], []
@@ -72,7 +67,7 @@ for i, idx in enumerate(indices):
     plt.tight_layout()
     plt.subplots_adjust(top=0.9)
     # plt.savefig(f"Baseline/prediction_compare_{i}.png")
-    plt.savefig(f"data_augmentation/prediction_compare_{i}.png")
+    plt.savefig(f"data_augmentation/prediction_compare_{i}_new.png")
     plt.close()
 
 
@@ -82,5 +77,5 @@ evaluate_model(
     image_tiles=image_tiles,
     mask_tiles=mask_tiles,
     # save_path="Baseline/evaluation_metrics.txt"
-    save_path="data_augmentation/evaluation_metrics_augmented.txt"
+    save_path="data_augmentation/evaluation_metrics_augmented_new.txt"
 )

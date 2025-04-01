@@ -5,35 +5,19 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from torchvision.transforms.functional import to_tensor
 import matplotlib.pyplot as plt
-import rasterio
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from collections import Counter
-from utils import evaluate_model
+from utils import evaluate_model, tile_image, load_rgb_tif, SegmentationDataset
+from torchvision.transforms.functional import to_tensor
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 工具函数
-def tile_image(image, size):
-    tiles = []
-    h, w = image.shape[:2]
-    for y in range(0, h, size):
-        for x in range(0, w, size):
-            if y + size <= h and x + size <= w:
-                tiles.append(image[y:y+size, x:x+size])
-    return tiles
-
-def load_rgb_tif(filepath):
-    with rasterio.open(filepath) as src:
-        img = src.read([1, 2, 3])
-        img = np.transpose(img, (1, 2, 0))
-    return img.astype(np.uint8)
-
 def extract_class_tiles(images, masks, class_ids, extra_copies=1):
     selected_imgs, selected_masks = [], []
     for img, msk in zip(images, masks):
@@ -56,27 +40,6 @@ train_transform = A.Compose([
     ToTensorV2()
 ])
 
-# 数据集类
-class SegmentationDataset(Dataset):
-    def __init__(self, images, masks, transform=None):
-        self.images = images
-        self.masks = masks
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.images)
-
-    def __getitem__(self, idx):
-        image = self.images[idx]
-        mask = self.masks[idx]
-        if self.transform:
-            augmented = self.transform(image=image, mask=mask)
-            image = augmented['image']
-            mask = augmented['mask'].long()
-        else:
-            image = to_tensor(image)
-            mask = torch.from_numpy(mask).long()
-        return image, mask
 
 # U-Net模型结构
 class UNet(nn.Module):
@@ -112,10 +75,10 @@ class UNet(nn.Module):
         return self.final(d1)
 
 # 数据加载
-image_paths = [r"C:\cartography\project\Baseline\data\rgb_TA_138_1930.tif",
-               r"C:\cartography\project\Baseline\data\rgb_TA_316_1918.tif"]
-mask_paths = [r"C:\cartography\project\Baseline\data\training_target_s1930.png",
-              r"C:\cartography\project\Baseline\data\training_target_s1918.png"]
+image_paths = [r"C:\cartography\project\data\rgb_TA_138_1930.tif",
+               r"C:\cartography\project\data\rgb_TA_316_1918.tif"]
+mask_paths = [r"C:\cartography\project\data\training_target_s1930.png",
+              r"C:\cartography\project\data\training_target_s1918.png"]
 tile_size = 500
 
 # crop images
@@ -133,6 +96,24 @@ image_tiles += lake_imgs + wetland_imgs
 mask_tiles += lake_msks + wetland_msks
 
 
+# Visualize some image and mask samples to check
+import random
+indices_to_check = random.sample(range(len(image_tiles)), 50)
+for idx in indices_to_check:
+    img = image_tiles[idx]
+    mask = mask_tiles[idx]
+
+    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+    ax[0].imshow(img)
+    ax[0].set_title(f"Image Tile {idx}")
+    ax[1].imshow(mask, cmap='tab20')
+    ax[1].set_title(f"Mask Tile {idx}")
+    for a in ax: a.axis('off')
+    plt.tight_layout()
+    plt.savefig(f"sample_check/sample_tile_{idx}.png")
+    plt.close()
+
+
 # Compute class weights from class frequency
 def compute_class_weights(masks, n_classes):
     pixel_counter = Counter()
@@ -142,9 +123,11 @@ def compute_class_weights(masks, n_classes):
         for u, c in zip(unique, counts):
             pixel_counter[u] += c
             total_pixels += c
-    freqs = np.array([pixel_counter[i] / total_pixels if i in pixel_counter else 0.0 for i in range(n_classes)])
-    weights = 1.0 / (freqs + 1e-6)
+
+    freqs = np.array([pixel_counter[i] / total_pixels if i in pixel_counter else 1e-6 for i in range(n_classes)])
+    weights = 1.0 / (np.log(1.02 + freqs))
     weights = weights / weights.mean()
+    weights = np.clip(weights, 0.5, 2.0)
     return torch.tensor(weights, dtype=torch.float32)
 
 n_classes = 8
@@ -156,7 +139,27 @@ print("Computed Class Weights:", class_weights)
 dataset = SegmentationDataset(image_tiles, mask_tiles, transform=train_transform)
 loader = DataLoader(dataset, batch_size=8, shuffle=True)
 
-# 初始化模型和训练组件
+
+# Visualize to check the samples after augmentation
+random.seed(42)
+indices_to_check = random.sample(range(len(dataset)), 50)
+for idx in indices_to_check:
+    img_tensor, mask_tensor = dataset[idx]
+    img = img_tensor.permute(1, 2, 0).cpu().numpy()
+    mask = mask_tensor.cpu().numpy()
+
+    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+    ax[0].imshow(img)
+    ax[0].set_title(f"Augmented Image {idx}")
+    ax[1].imshow(mask, cmap='tab20')
+    ax[1].set_title(f"Augmented Mask {idx}")
+    for a in ax: a.axis('off')
+    plt.tight_layout()
+    plt.savefig(f"augmented_sample_check/augmented_tile_{idx}.png")
+    plt.close()
+
+
+# Initialize model and hyper parameters
 model = UNet(n_classes=8).to(device)
 
 criterion = nn.CrossEntropyLoss(weight=class_weights)
@@ -164,7 +167,7 @@ criterion = nn.CrossEntropyLoss(weight=class_weights)
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
 scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=False, min_lr=1e-5)
 
-# 正式训练
+
 n_epochs = 30
 for epoch in range(n_epochs):
     model.train()
@@ -181,8 +184,8 @@ for epoch in range(n_epochs):
     print(f"Epoch {epoch+1}/{n_epochs}, Loss: {avg_loss:.4f}")
     scheduler.step(avg_loss)
 
-# 保存模型
-torch.save(model.state_dict(), "unet_model_data_augmented.pth")
+# save model
+torch.save(model.state_dict(), "unet_model_data_augmented_new.pth")
 
 
 # visualization the results
@@ -194,6 +197,9 @@ for i, idx in enumerate(indices):
     with torch.no_grad():
         pred_mask = model(img.unsqueeze(0).to(device)).argmax(1).squeeze().cpu()
 
+    print(f"Tile {idx} - Predicted classes:", np.unique(pred_mask.numpy()))
+    print(f"Tile {idx} - Ground truth classes:", np.unique(true_mask.numpy()))
+
     fig, ax = plt.subplots(1, 3, figsize=(12, 4))
     ax[0].imshow(img.permute(1, 2, 0))
     ax[0].set_title(f"Image (Tile {idx})")
@@ -204,7 +210,36 @@ for i, idx in enumerate(indices):
     for a in ax: a.axis("off")
     plt.tight_layout()
     plt.subplots_adjust(top=0.9)
-    plt.savefig(f"data_augmentation/augmented_compare_{i}.png")
+    plt.savefig(f"data_augmentation/augmented_compare_{i}_new.png")
+    plt.close()
+
+
+model.eval()
+dataset_no_aug = SegmentationDataset(image_tiles, mask_tiles, transform=None)
+indices = [179, 195]
+
+for i, idx in enumerate(indices):
+    img_np, true_mask_np = dataset_no_aug[idx]
+    img_tensor = img_np.unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        pred_mask = model(img_tensor).argmax(1).squeeze().cpu()
+
+    print(f"Tile {idx} - Predicted classes:", np.unique(pred_mask.numpy()))
+    print(f"Tile {idx} - Ground truth classes:", np.unique(true_mask_np))
+
+    fig, ax = plt.subplots(1, 3, figsize=(12, 4))
+    ax[0].imshow(img_np)
+    ax[0].set_title(f"Original Image (Tile {idx})")
+    ax[1].imshow(pred_mask, cmap='tab20')
+    ax[1].set_title("Prediction")
+    ax[2].imshow(true_mask_np, cmap='tab20')
+    ax[2].set_title("Ground Truth")
+    for a in ax:
+        a.axis("off")
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.9)
+    plt.savefig(f"data_augmentation/augmented_compare_{idx}_new_raw_data.png")
     plt.close()
 
 
@@ -213,7 +248,6 @@ evaluate_model(
     model=model,
     image_tiles=image_tiles,
     mask_tiles=mask_tiles,
-    save_path="data_augmentation/evaluation_metrics_augmented.txt"
+    save_path="data_augmentation/evaluation_metrics_augmented_new.txt"
 )
-
 
