@@ -1,0 +1,14 @@
+===== Overall Metrics =====
+Pixel Accuracy: 0.6001
+Mean F1 Score:  0.1874
+Mean IoU:       0.1352
+
+===== Per-Class Metrics =====
+Background | IoU: 0.5966 | F1: 0.7473 | Precision: 0.5971 | Recall: 0.9985
+Road       | IoU: 0.0000 | F1: 0.0000 | Precision: 0.0000 | Recall: 0.0000
+Stream     | IoU: 0.0000 | F1: 0.0000 | Precision: 0.0000 | Recall: 0.0000
+Forest     | IoU: 0.0040 | F1: 0.0079 | Precision: 0.3786 | Recall: 0.0040
+Lakes      | IoU: 0.0005 | F1: 0.0009 | Precision: 1.0000 | Recall: 0.0005
+Rivers     | IoU: 0.3646 | F1: 0.5343 | Precision: 0.9847 | Recall: 0.3666
+Wetlands   | IoU: 0.0022 | F1: 0.0044 | Precision: 0.0183 | Recall: 0.0025
+Buildings  | IoU: 0.1137 | F1: 0.2041 | Precision: 0.7095 | Recall: 0.1192

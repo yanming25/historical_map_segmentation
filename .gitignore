@@ -2,3 +2,5 @@ venv/
 data/
 .idea/
 __pycache__/
+sample_check/
+augmented_sample_check/
