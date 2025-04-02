@@ -9,9 +9,9 @@ import matplotlib.pyplot as plt
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from collections import Counter
 from utils import evaluate_model, tile_image, load_rgb_tif, SegmentationDataset
-from torchvision.transforms.functional import to_tensor
+from PIL import Image
+
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -34,7 +34,7 @@ train_transform = A.Compose([
     A.VerticalFlip(p=0.5),
     A.RandomRotate90(p=0.5),
     A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=15, p=0.5),
-    A.RandomSizedCrop(min_max_height=(400, 500), size=(500, 500), p=0.3),
+    # A.RandomSizedCrop(min_max_height=(400, 500), size=(500, 500), p=0.3),
     A.CoarseDropout(max_holes=8, max_height=40, max_width=40, fill_value=0, mask_fill_value=0, p=0.3),
     A.Normalize(),
     ToTensorV2()
@@ -85,54 +85,42 @@ tile_size = 500
 image_tiles, mask_tiles = [], []
 for img_path, msk_path in zip(image_paths, mask_paths):
     image = load_rgb_tif(img_path)
-    mask = cv2.imread(msk_path, cv2.IMREAD_GRAYSCALE)
+    mask = Image.open(msk_path).convert("L")
+    mask = np.array(mask)
+    print(f"{msk_path}'s Mask unique values: {np.unique(mask)}")
     image_tiles += tile_image(image, tile_size)
     mask_tiles += tile_image(mask, tile_size)
 
 # 复制湖泊和湿地 tiles
+stream_imgs, stream_msks = extract_class_tiles(image_tiles, mask_tiles, class_ids=[2], extra_copies=2)
 lake_imgs, lake_msks = extract_class_tiles(image_tiles, mask_tiles, class_ids=[4], extra_copies=3)
-wetland_imgs, wetland_msks = extract_class_tiles(image_tiles, mask_tiles, class_ids=[6], extra_copies=5)
-image_tiles += lake_imgs + wetland_imgs
-mask_tiles += lake_msks + wetland_msks
+wetland_imgs, wetland_msks = extract_class_tiles(image_tiles, mask_tiles, class_ids=[6], extra_copies=8)
+building_imgs, building_msks = extract_class_tiles(image_tiles, mask_tiles, class_ids=[7], extra_copies=3)
+image_tiles += lake_imgs + wetland_imgs + stream_imgs + building_imgs
+mask_tiles += lake_msks + wetland_msks + stream_msks + building_msks
 
 
-# Visualize some image and mask samples to check
-import random
-indices_to_check = random.sample(range(len(image_tiles)), 50)
-for idx in indices_to_check:
-    img = image_tiles[idx]
-    mask = mask_tiles[idx]
+# # Visualize some image and mask samples to check
+# import random
+# indices_to_check = random.sample(range(len(image_tiles)), 50)
+# for idx in indices_to_check:
+#     img = image_tiles[idx]
+#     mask = mask_tiles[idx]
+#
+#     fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+#     ax[0].imshow(img)
+#     ax[0].set_title(f"Image Tile {idx}")
+#     ax[1].imshow(mask, cmap='tab20')
+#     ax[1].set_title(f"Mask Tile {idx}")
+#     for a in ax: a.axis('off')
+#     plt.tight_layout()
+#     plt.savefig(f"sample_check/sample_tile_{idx}.png")
+#     plt.close()
 
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-    ax[0].imshow(img)
-    ax[0].set_title(f"Image Tile {idx}")
-    ax[1].imshow(mask, cmap='tab20')
-    ax[1].set_title(f"Mask Tile {idx}")
-    for a in ax: a.axis('off')
-    plt.tight_layout()
-    plt.savefig(f"sample_check/sample_tile_{idx}.png")
-    plt.close()
-
-
-# Compute class weights from class frequency
-def compute_class_weights(masks, n_classes):
-    pixel_counter = Counter()
-    total_pixels = 0
-    for mask in masks:
-        unique, counts = np.unique(mask, return_counts=True)
-        for u, c in zip(unique, counts):
-            pixel_counter[u] += c
-            total_pixels += c
-
-    freqs = np.array([pixel_counter[i] / total_pixels if i in pixel_counter else 1e-6 for i in range(n_classes)])
-    weights = 1.0 / (np.log(1.02 + freqs))
-    weights = weights / weights.mean()
-    weights = np.clip(weights, 0.5, 2.0)
-    return torch.tensor(weights, dtype=torch.float32)
 
 n_classes = 8
-class_weights = compute_class_weights(mask_tiles, n_classes).to(device)
-print("Computed Class Weights:", class_weights)
+# class_weights = compute_class_weights(mask_tiles, n_classes).to(device)
+# print("Computed Class Weights:", class_weights)
 
 
 # 构造数据集和加载器
@@ -141,10 +129,24 @@ loader = DataLoader(dataset, batch_size=8, shuffle=True)
 
 
 # Visualize to check the samples after augmentation
+import random
 random.seed(42)
 indices_to_check = random.sample(range(len(dataset)), 50)
 for idx in indices_to_check:
     img_tensor, mask_tensor = dataset[idx]
+
+    # # ------- 检查 mask 是否为整数类别 -------
+    # unique_mask_vals = torch.unique(mask_tensor).cpu().numpy()
+    # print(f"[{idx}] Mask unique values:", unique_mask_vals)
+    #
+    # # 检查是否存在非整数类别
+    # if not torch.all(mask_tensor == mask_tensor.long()):
+    #     print(f"⚠️ WARNING: Non-integer values found in mask for idx {idx}")
+    #
+    # # ------- 检查 image 是否归一化 -------
+    # img_min, img_max = img_tensor.min().item(), img_tensor.max().item()
+    # print(f"[{idx}] Image value range: min={img_min:.3f}, max={img_max:.3f}")
+
     img = img_tensor.permute(1, 2, 0).cpu().numpy()
     mask = mask_tensor.cpu().numpy()
 
@@ -159,13 +161,14 @@ for idx in indices_to_check:
     plt.close()
 
 
-# Initialize model and hyper parameters
-model = UNet(n_classes=8).to(device)
+# Initialize model and hyperparameters
+model = UNet(n_classes).to(device)
 
-criterion = nn.CrossEntropyLoss(weight=class_weights)
+#criterion = nn.CrossEntropyLoss(weight=class_weights)
+criterion = nn.CrossEntropyLoss()
 
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
-scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=False, min_lr=1e-5)
+scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, min_lr=1e-5)
 
 
 n_epochs = 30
@@ -185,69 +188,70 @@ for epoch in range(n_epochs):
     scheduler.step(avg_loss)
 
 # save model
-torch.save(model.state_dict(), "unet_model_data_augmented_new.pth")
+torch.save(model.state_dict(), "unet_model_data_augmented_aug_copy.pth")
 
 
-# visualization the results
-model.eval()
-indices = [179,195]
-for i, idx in enumerate(indices):
-    #idx = random.randint(0, len(dataset) - 1)
-    img, true_mask = dataset[idx]
-    with torch.no_grad():
-        pred_mask = model(img.unsqueeze(0).to(device)).argmax(1).squeeze().cpu()
-
-    print(f"Tile {idx} - Predicted classes:", np.unique(pred_mask.numpy()))
-    print(f"Tile {idx} - Ground truth classes:", np.unique(true_mask.numpy()))
-
-    fig, ax = plt.subplots(1, 3, figsize=(12, 4))
-    ax[0].imshow(img.permute(1, 2, 0))
-    ax[0].set_title(f"Image (Tile {idx})")
-    ax[1].imshow(pred_mask, cmap='tab20')
-    ax[1].set_title("Prediction")
-    ax[2].imshow(true_mask, cmap='tab20')
-    ax[2].set_title("Ground Truth")
-    for a in ax: a.axis("off")
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.9)
-    plt.savefig(f"data_augmentation/augmented_compare_{i}_new.png")
-    plt.close()
-
-
-model.eval()
-dataset_no_aug = SegmentationDataset(image_tiles, mask_tiles, transform=None)
-indices = [179, 195]
-
-for i, idx in enumerate(indices):
-    img_np, true_mask_np = dataset_no_aug[idx]
-    img_tensor = img_np.unsqueeze(0).to(device)
-
-    with torch.no_grad():
-        pred_mask = model(img_tensor).argmax(1).squeeze().cpu()
-
-    print(f"Tile {idx} - Predicted classes:", np.unique(pred_mask.numpy()))
-    print(f"Tile {idx} - Ground truth classes:", np.unique(true_mask_np))
-
-    fig, ax = plt.subplots(1, 3, figsize=(12, 4))
-    ax[0].imshow(img_np)
-    ax[0].set_title(f"Original Image (Tile {idx})")
-    ax[1].imshow(pred_mask, cmap='tab20')
-    ax[1].set_title("Prediction")
-    ax[2].imshow(true_mask_np, cmap='tab20')
-    ax[2].set_title("Ground Truth")
-    for a in ax:
-        a.axis("off")
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.9)
-    plt.savefig(f"data_augmentation/augmented_compare_{idx}_new_raw_data.png")
-    plt.close()
+# # visualize two prediction samples from training set (with augmentation)
+# model.eval()
+# indices = [179,195]
+# for i, idx in enumerate(indices):
+#     #idx = random.randint(0, len(dataset) - 1)
+#     img, true_mask = dataset[idx]
+#     with torch.no_grad():
+#         pred_mask = model(img.unsqueeze(0).to(device)).argmax(1).squeeze().cpu()
+#
+#     print(f"Tile {idx} - Predicted classes:", np.unique(pred_mask.numpy()))
+#     print(f"Tile {idx} - Ground truth classes:", np.unique(true_mask.numpy()))
+#
+#     fig, ax = plt.subplots(1, 3, figsize=(12, 4))
+#     ax[0].imshow(img.permute(1, 2, 0))
+#     ax[0].set_title(f"Image (Tile {idx})")
+#     ax[1].imshow(pred_mask, cmap='tab20')
+#     ax[1].set_title("Prediction")
+#     ax[2].imshow(true_mask, cmap='tab20')
+#     ax[2].set_title("Ground Truth")
+#     for a in ax: a.axis("off")
+#     plt.tight_layout()
+#     plt.subplots_adjust(top=0.9)
+#     plt.savefig(f"data_augmentation/training_compare_{i}_new.png")
+#     plt.close()
+#
+#
+# # visualize two prediction samples from training set (without augmentation)
+# dataset_no_aug = SegmentationDataset(image_tiles, mask_tiles, transform=None)
+# indices = [179, 195]
+#
+# for i, idx in enumerate(indices):
+#     img_np, true_mask_np = dataset_no_aug[idx]
+#     img_tensor = img_np.unsqueeze(0).to(device)
+#
+#     with torch.no_grad():
+#         pred_mask = model(img_tensor).argmax(1).squeeze().cpu()
+#
+#     print(f"Tile {idx} - Predicted classes:", np.unique(pred_mask.numpy()))
+#     print(f"Tile {idx} - Ground truth classes:", np.unique(true_mask_np))
+#
+#     fig, ax = plt.subplots(1, 3, figsize=(12, 4))
+#     ax[0].imshow(img_np.permute(1, 2, 0))
+#     ax[0].set_title(f"Original Image (Tile {idx})")
+#     ax[1].imshow(pred_mask, cmap='tab20')
+#     ax[1].set_title("Prediction")
+#     ax[2].imshow(true_mask_np, cmap='tab20')
+#     ax[2].set_title("Ground Truth")
+#     for a in ax:
+#         a.axis("off")
+#     plt.tight_layout()
+#     plt.subplots_adjust(top=0.9)
+#     plt.savefig(f"data_augmentation/training_compare_{idx}_raw_no_aug.png")
+#     plt.close()
 
 
 # Compute metrics
+model.eval()
 evaluate_model(
     model=model,
     image_tiles=image_tiles,
     mask_tiles=mask_tiles,
-    save_path="data_augmentation/evaluation_metrics_augmented_new.txt"
+    save_path="data_augmentation/evaluation_metrics_aug_copy.txt"
 )
 
