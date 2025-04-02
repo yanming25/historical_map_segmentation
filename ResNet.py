@@ -76,10 +76,11 @@ class UNetResNet(nn.Module):
 
         return self.final(d1)
 
-image_paths = [r"C:\cartography\project\Baseline\data\rgb_TA_138_1930.tif",
-               r"C:\cartography\project\Baseline\data\rgb_TA_316_1918.tif"]
-mask_paths = [r"C:\cartography\project\Baseline\data\training_target_s1930.png",
-              r"C:\cartography\project\Baseline\data\training_target_s1918.png"]
+image_paths = [r"C:\cartography\project\data\rgb_TA_138_1930.tif",
+               r"C:\cartography\project\data\rgb_TA_316_1918.tif"]
+mask_paths = [r"C:\cartography\project\data\training_target_s1930.png",
+              r"C:\cartography\project\data\training_target_s1918.png"]
+
 tile_size = 500
 n_classes = 8
 
@@ -131,9 +132,9 @@ for epoch in range(n_epochs):
     scheduler.step(avg_loss)
 
 # Save the trained model
-torch.save(model.state_dict(), "unet_resnet_decoder.pth")
+torch.save(model.state_dict(), "Unet_ResNet/unet_resnet_decoder.pth")
 
-utils.evaluate_model(model, image_tiles, mask_tiles, save_path="unet_resnet_decoder.txt")
+utils.evaluate_model(model, image_tiles, mask_tiles, save_path="Unet_ResNet/unet_resnet_decoder.txt")
 
 # 2. Fine tuning (Unfreeze partial encoder layers)
 for param in model.encoder.layer3.parameters():
@@ -164,7 +165,8 @@ for epoch in range(n_finetune_epochs):
     print(f"Fine-tune Epoch {epoch + 1}/{n_finetune_epochs}, Loss: {avg_loss:.4f}")
     scheduler.step(avg_loss)
 
-utils.evaluate_model(model, image_tiles, mask_tiles, save_path="unet_resnet_encoder3_4.txt")
+torch.save(model.state_dict(), "Unet_ResNet/unet_resnet_encoder3_4.pth")
+utils.evaluate_model(model, image_tiles, mask_tiles, save_path="Unet_ResNet/unet_resnet_encoder3_4.txt")
 
 # 3. Fine tuning (Unfreeze encoder layers)
 for param in model.encoder.parameters():
@@ -193,6 +195,6 @@ for epoch in range(n_finetune_epochs):
     print(f"Fine-tune Epoch {epoch + 1}/{n_finetune_epochs}, Loss: {avg_loss:.4f}")
     scheduler.step(avg_loss)
 
-torch.save(model.state_dict(), "unet_resnet_finetuned.pth")
-utils.evaluate_model(model, image_tiles, mask_tiles, save_path="unet_resnet_finetuned.txt")
+torch.save(model.state_dict(), "Unet_ResNet/unet_resnet_finetuned.pth")
+utils.evaluate_model(model, image_tiles, mask_tiles, save_path="Unet_ResNet/unet_resnet_finetuned.txt")
 
