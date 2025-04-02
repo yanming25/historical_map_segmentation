@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import torchvision
@@ -34,10 +35,15 @@ class UNetResNet(nn.Module):
         self.encoder.fc = nn.Identity() # Remove original fully connected layer
 
         # U-Net decoder
-        self.up4 = self._upsample(filters[-1], filters[-2])
-        self.up3 = self._upsample(filters[-2], filters[-3])
-        self.up2 = self._upsample(filters[-3], filters[-4])
-        self.up1 = self._upsample(filters[-4], 64)
+        self.up4 = self._upsample(256, 128)
+        self.up3 = self._upsample(128, 64)
+        self.up2 = self._upsample(64, 64)
+        self.up1 = self._upsample(64, 64)
+
+        #self.up4 = self._upsample(filters[-1], filters[-2])
+        #self.up3 = self._upsample(filters[-2], filters[-3])
+        #self.up2 = self._upsample(filters[-3], filters[-4])
+        #self.up1 = self._upsample(filters[-4], 64)
 
         self.final = nn.Conv2d(64, n_classes, kernel_size=1) # Output layer
 
@@ -46,13 +52,9 @@ class UNetResNet(nn.Module):
             nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
             nn.ReLU(inplace=True),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
         )
-
-    #def _upsample(self, in_channels, out_channels):
-        #return nn.Sequential(
-            #nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
-            #nn.ReLU(inplace=True))
 
     def forward(self, x):
         x = x.float()
@@ -71,21 +73,32 @@ class UNetResNet(nn.Module):
         # Decoder (upsampling)
         d4 = self.up4(x5)
         d4 = self._conv1x1(d4, 256)
+        #d4 = self._resize_like(d4, x4)
         d4 = torch.cat([d4, x4], dim=1)
+
         d3 = self.up3(d4)
         d3 = self._conv1x1(d3, 128)
+        #d3 = self._resize_like(d3, x3)
         d3 = torch.cat([d3, x3], dim=1)
+
         d2 = self.up2(d3)
         d2 = self._conv1x1(d2, 64)
+        #d2 = self._resize_like(d2, x2)
         d2 = torch.cat([d2, x2], dim=1)
+
         d1 = self.up1(d2)
         d1 = self._conv1x1(d1, 64)
+        #d1 = self._resize_like(d1, x1)
         d1 = torch.cat([d1, x1], dim=1)
 
         return self.final(d1)
 
+    def _resize_like(self, tensor, target_tensor):
+        return F.interpolate(tensor, size=target_tensor.shape[2:], mode='bilinear', align_corners=False)
+
     def _conv1x1(self, x, out_channels):
-        return nn.Conv2d(x.shape[1], out_channels, kernel_size=1)(x)
+        conv_layer = nn.Conv2d(x.shape[1], out_channels, kernel_size=1).to(x.device)
+        return conv_layer(x)
 
 image_paths = [r"C:\cartography\project\data\rgb_TA_138_1930.tif",
                r"C:\cartography\project\data\rgb_TA_316_1918.tif"]
@@ -110,7 +123,7 @@ dataset = utils.SegmentationDataset(image_tiles, mask_tiles, transform=ToTensorV
 loader = DataLoader(dataset, batch_size=8, shuffle=True)
 
 # Initial model
-model = UNetResNet(n_classes=8, backbone="resnet34").to(device) # ResNet34 backbone
+model = UNetResNet(n_classes, backbone="resnet34").to(device) # ResNet34 backbone
 # backbone="resnet50" for ResNet50
 
 # 1. Freeze encoder layers (ResNet)
