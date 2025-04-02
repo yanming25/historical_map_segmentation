@@ -7,17 +7,11 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import torchvision
 import torchvision.models as models
-from torchvision.transforms.functional import to_tensor
 import matplotlib.pyplot as plt
-import rasterio
-import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from collections import Counter
 from PIL import Image
-
 import utils
-from utils import evaluate_model
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -50,9 +44,19 @@ class UNetResNet(nn.Module):
     def _upsample(self, in_channels, out_channels):
         return nn.Sequential(
             nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
-            nn.ReLU(inplace=True))
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True)
+        )
+
+    #def _upsample(self, in_channels, out_channels):
+        #return nn.Sequential(
+            #nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
+            #nn.ReLU(inplace=True))
 
     def forward(self, x):
+        x = x.float()
+
         # Encoder (ResNet)
         x1 = self.encoder.conv1(x)  # Initial conv layer
         x1 = self.encoder.bn1(x1)
@@ -66,15 +70,22 @@ class UNetResNet(nn.Module):
 
         # Decoder (upsampling)
         d4 = self.up4(x5)
+        d4 = self._conv1x1(d4, 256)
         d4 = torch.cat([d4, x4], dim=1)
         d3 = self.up3(d4)
+        d3 = self._conv1x1(d3, 128)
         d3 = torch.cat([d3, x3], dim=1)
         d2 = self.up2(d3)
+        d2 = self._conv1x1(d2, 64)
         d2 = torch.cat([d2, x2], dim=1)
         d1 = self.up1(d2)
+        d1 = self._conv1x1(d1, 64)
         d1 = torch.cat([d1, x1], dim=1)
 
         return self.final(d1)
+
+    def _conv1x1(self, x, out_channels):
+        return nn.Conv2d(x.shape[1], out_channels, kernel_size=1)(x)
 
 image_paths = [r"C:\cartography\project\data\rgb_TA_138_1930.tif",
                r"C:\cartography\project\data\rgb_TA_316_1918.tif"]
@@ -130,6 +141,31 @@ for epoch in range(n_epochs):
     avg_loss = running_loss / len(loader)
     print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {avg_loss:.4f}")
     scheduler.step(avg_loss)
+
+# visualization the results
+model.eval()
+indices = [179,195]
+for i, idx in enumerate(indices):
+    #idx = random.randint(0, len(dataset) - 1)
+    img, true_mask = dataset[idx]
+    with torch.no_grad():
+        pred_mask = model(img.unsqueeze(0).to(device)).argmax(1).squeeze().cpu()
+
+    print(f"Tile {idx} - Predicted classes:", np.unique(pred_mask.numpy()))
+    print(f"Tile {idx} - Ground truth classes:", np.unique(true_mask.numpy()))
+
+    fig, ax = plt.subplots(1, 3, figsize=(12, 4))
+    ax[0].imshow(img.permute(1, 2, 0))
+    ax[0].set_title(f"Image (Tile {idx})")
+    ax[1].imshow(pred_mask, cmap='tab20')
+    ax[1].set_title("Prediction")
+    ax[2].imshow(true_mask, cmap='tab20')
+    ax[2].set_title("Ground Truth")
+    for a in ax: a.axis("off")
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.9)
+    plt.savefig(f"Unet_ResNet/Unet_ResNet_compare_{i}_new.png")
+    plt.close()
 
 # Save the trained model
 torch.save(model.state_dict(), "Unet_ResNet/unet_resnet_decoder.pth")
