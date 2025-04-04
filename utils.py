@@ -7,6 +7,8 @@ import rasterio
 from torchvision import transforms
 from skimage.morphology import skeletonize, binary_dilation, disk
 from collections import Counter
+import matplotlib.pyplot as plt
+import random
 
 
 def tile_image(image, size):
@@ -49,7 +51,7 @@ def load_rgb_tif(filepath):
     return img.astype(np.uint8)
 
 
-# def evaluate_model(model, image_tiles, mask_tiles, save_path):
+# def evaluate_model_adjust(model, image_tiles, mask_tiles, save_path):
 #
 #     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #     class_names = ['Background', 'Road', 'Stream', 'Forest', 'Lakes', 'Rivers', 'Wetlands', 'Buildings']
@@ -186,3 +188,30 @@ def compute_class_weights(masks, n_classes):
     weights = weights / weights.mean()
     weights = np.clip(weights, 0.5, 2.0)
     return torch.tensor(weights, dtype=torch.float32)
+
+
+def visualize_resnet(model, dataset, indices, device, save_path, model_name, setting="traning"):
+    for i, idx in enumerate(indices):
+        idx = random.randint(0, len(dataset) - 1)
+        img, true_mask = dataset[idx]
+
+        with torch.no_grad():
+            pred_mask = model(img.unsqueeze(0).to(device)).argmax(1).squeeze().cpu()
+
+        print(f"Tile {idx} - Predicted classes:", np.unique(pred_mask.numpy()))
+        print(f"Tile {idx} - Ground truth classes:", np.unique(true_mask.numpy()))
+
+        # Create a figure with 3 subplots: Image, Prediction, Ground Truth
+        fig, ax = plt.subplots(1, 3, figsize=(12, 4))
+        ax[0].imshow(img.permute(1, 2, 0))
+        ax[0].set_title(f"Image (Tile {idx})")
+        ax[1].imshow(pred_mask, cmap='tab20')
+        ax[1].set_title("Prediction")
+        ax[2].imshow(true_mask, cmap='tab20')
+        ax[2].set_title("Ground Truth")
+        for a in ax: a.axis("off")
+
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.9)
+        plt.savefig(f"{save_path}/{setting}_compare_{i}_{model_name}.png")
+        plt.close()
