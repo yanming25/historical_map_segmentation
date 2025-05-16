@@ -1,0 +1,16 @@
+===== Overall Metrics =====
+Adapted Accuracy:         0.9478
+Adapted Mean F1 Score:    0.8069
+Adapted Mean IoU:         0.7563
+
+===== Per-Class Metrics (Standard) =====
+Background | IoU: 0.9687 | F1: 0.9841 | Precision: 0.9936 | Recall: 0.9747
+Forest     | IoU: 0.9808 | F1: 0.9903 | Precision: 0.9899 | Recall: 0.9908
+Lakes      | IoU: 0.9533 | F1: 0.9761 | Precision: 0.9863 | Recall: 0.9662
+Rivers     | IoU: 0.7227 | F1: 0.8390 | Precision: 0.7484 | Recall: 0.9546
+Wetlands   | IoU: 0.0051 | F1: 0.0101 | Precision: 0.0052 | Recall: 0.1284
+Buildings  | IoU: 0.8623 | F1: 0.9260 | Precision: 0.9441 | Recall: 0.9086
+
+===== Centerline-based Metrics (Buffer=8 pixels) =====
+Road               | F1(Dice): 0.9767 | Precision: 0.9650 | Recall: 0.9887
+Stream             | F1(Dice): 0.7525 | Precision: 0.8502 | Recall: 0.6750
